@@ -204,7 +204,8 @@ pub fn save_recording_termrec(
             RecordingEvent::InputRealized(data) => write_cmd_data(&mut f, 'i', data),
             RecordingEvent::SleepFinished(duration) => write_cmd_duration(&mut f, 's', duration),
             RecordingEvent::BarrierUnlocked(data) => write_cmd_data(&mut f, 'w', data),
-        }.context("Failed to write to output file")?;
+        }
+        .context("Failed to write to output file")?;
     }
     Ok(())
 }
