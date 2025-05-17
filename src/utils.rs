@@ -31,7 +31,7 @@ pub fn find_subslice(heysstack: &[u8], needle: &[u8]) -> Option<usize> {
     }
 }
 
-pub fn delete_subslices<'a, 'b>(data: &'a [u8], delete_sequences: &[&[u8]]) -> Cow<'a, [u8]> {
+pub fn delete_subslices<'a>(data: &'a [u8], delete_sequences: &[&[u8]]) -> Cow<'a, [u8]> {
     if delete_sequences.is_empty() {
         return Cow::Borrowed(data);
     }

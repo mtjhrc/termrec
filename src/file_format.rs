@@ -1,3 +1,5 @@
+#![allow(clippy::write_with_newline)]
+
 use anyhow::{anyhow, bail, ensure, Context};
 use std::ffi::OsStr;
 use std::fs::File;

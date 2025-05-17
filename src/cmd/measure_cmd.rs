@@ -15,7 +15,6 @@ use std::time::Duration;
         .args(&["to_frame", "to_frame_with_text", "to_event"])
         .required(true)
 ))]
-
 /// Measure time between events in a recording
 pub struct MeasureCmd {
     #[clap(long, short = 'd')]
@@ -106,6 +105,7 @@ impl MeasureCmd {
         } else
         /* to_frame/to_frame_with text */
         {
+            #[allow(clippy::type_complexity)]
             let matches: Box<dyn Fn(&[u8]) -> bool> = if let Some(to_frame) = self.to_frame {
                 let reference_frame =
                     fs::read(to_frame).context("Specified `to_frame` file does not exist.")?;
