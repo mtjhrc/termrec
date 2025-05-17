@@ -1,13 +1,12 @@
 use crate::file_format::{load_recording, parse_event_cmdline, RecordingEvent};
-use crate::utils::find_subslice;
+use crate::utils::{delete_subslices, find_subslice};
 use anyhow::{bail, Context};
 use clap::ArgGroup;
 use clap::Parser;
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsString;
 use std::fs;
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
-use std::str::FromStr;
 use std::time::Duration;
 
 #[derive(Parser)]
@@ -34,8 +33,10 @@ pub struct MeasureCmd {
     #[clap(long)]
     from_event: OsString,
 
+    /// When comparing frames, ignore the following character sequences
+    /// (can be used to remove terminal escape sequences)
     #[clap(long)]
-    delete_mosh_predict: bool,
+    ignore_sequence: Vec<OsString>,
 
     /// Path to a file containing a reference frame to measure up to
     #[clap(long)]
@@ -73,11 +74,15 @@ impl MeasureCmd {
             .transpose()
             .context("Invalid --before-event")?;
 
+        let ignore_sequences: Vec<&[u8]> =
+            self.ignore_sequence.iter().map(|s| s.as_bytes()).collect();
+
         let from_event = parse_event_cmdline(&self.from_event).context("Invalid --from-event")?;
 
         let recording = filter_only_after_and_before_events(recording, after_event, before_event);
 
-        let delta = if let Some(to_event) = self.to_event {
+        let delta;
+        if let Some(to_event) = self.to_event {
             let to_event = parse_event_cmdline(&to_event).context("Invalid --to-event")?;
 
             let mut start = None;
@@ -96,7 +101,8 @@ impl MeasureCmd {
                 }
             }
 
-            end.context("Didn't find --to_event")? - start.context("Didn't find --from_event")?
+            delta = end.context("Didn't find --to_event")?
+                - start.context("Didn't find --from_event")?
         } else
         /* to_frame/to_frame_with text */
         {
@@ -105,26 +111,21 @@ impl MeasureCmd {
                     fs::read(to_frame).context("Specified `to_frame` file does not exist.")?;
 
                 Box::new(move |frame_contents| {
-                    if self.delete_mosh_predict {
-                        reference_frame == delete_mosh_predict(frame_contents)
-                    } else {
-                        reference_frame == frame_contents
-                    }
+                    reference_frame == delete_subslices(frame_contents, &ignore_sequences)[..]
                 })
             } else if let Some(data) = self.to_frame_with_text {
                 Box::new(move |frame_contents| {
-                    if self.delete_mosh_predict {
-                        find_subslice(&delete_mosh_predict(frame_contents), data.as_bytes())
-                            .is_some()
-                    } else {
-                        find_subslice(frame_contents, data.as_bytes()).is_some()
-                    }
+                    find_subslice(
+                        &delete_subslices(frame_contents, &ignore_sequences),
+                        data.as_bytes(),
+                    )
+                    .is_some()
                 })
             } else {
                 unreachable!()
             };
 
-            measure(&matches, &from_event, &recording, &self.recording_dir)?
+            delta = measure(&matches, &from_event, &recording, &self.recording_dir)?
         };
 
         if self.human_units {
@@ -156,17 +157,6 @@ pub fn measure(
 
     let delta = timestamp_to - timestamp_from;
     Ok(delta)
-}
-
-// FIXME: this seems broken?
-fn delete_mosh_predict(data: &[u8]) -> Vec<u8> {
-    let mut data = Vec::from(data);
-    for escape in [b"\x1B[4m", b"\x1B[0m"] {
-        while let Some(index) = find_subslice(&data, escape) {
-            data.drain(index..index + escape.len());
-        }
-    }
-    data
 }
 
 fn filter_only_after_and_before_events(
