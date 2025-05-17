@@ -13,7 +13,7 @@ use nix::sys::signal::{SigSet, Signal};
 use nix::sys::signalfd::{SfdFlags, SignalFd};
 use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
 use nix::unistd::{read, Pid};
-use std::fs::File;
+use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::os::fd::{AsFd, AsRawFd, BorrowedFd, OwnedFd, RawFd};
 use std::os::unix::process::CommandExt;
@@ -34,6 +34,10 @@ pub struct RecordCmd {
 
     #[arg(short, long)]
     pub verbose: bool,
+
+    #[arg(long)]
+    /// Redirect child stderr to a file/pipe/...
+    pub child_stderr: Option<PathBuf>,
 
     /// Output file to save the recording to
     #[clap(
@@ -59,7 +63,13 @@ pub struct RecordCmd {
 impl RecordCmd {
     pub(crate) fn run(self) -> anyhow::Result<()> {
         if let Some(output) = self.output {
-            record_cmd(&output, self.input.as_deref(), &self.command, self.verbose)?;
+            record_cmd(
+                &output,
+                self.child_stderr.as_deref(),
+                self.input.as_deref(),
+                &self.command,
+                self.verbose,
+            )?;
         } else if let Some(output_dir) = self.output_dir {
             // Allow existing empty directory or create a new directory
             let output_is_empty_dir =
@@ -71,6 +81,7 @@ impl RecordCmd {
             let recording_path = output_dir.join("recording.termrec");
             record_cmd(
                 &recording_path,
+                self.child_stderr.as_deref(),
                 self.input.as_deref(),
                 &self.command,
                 self.verbose,
@@ -292,6 +303,7 @@ fn spawn_input_thread(
 
 fn record_cmd(
     output: &Path,
+    child_stderr: Option<&Path>,
     input: Option<&Path>,
     command: &[String],
     verbose: bool,
@@ -309,9 +321,21 @@ fn record_cmd(
         Vec::new()
     };
 
+    let child_stderr = if let Some(child_stderr) = child_stderr {
+        Some(
+            OpenOptions::new()
+                .write(true)
+                .open(child_stderr)
+                .context("Failed to open child stderr")?,
+        )
+    } else {
+        None
+    };
+
     let f = unsafe { forkpty(Some(&terminal_size), None) }.expect("Failed to fork pty");
     match f {
         ForkptyResult::Parent { child, master } => {
+            drop(child_stderr);
             let time_start = SystemTime::now();
 
             let (tx, input_thread) = if !input_events.is_empty() {
@@ -347,7 +371,13 @@ fn record_cmd(
             save_recording_termrec(events, output).context("Save recording")?;
         }
         ForkptyResult::Child => {
-            let err = Command::new(&command[0]).args(&command[1..]).exec();
+            let mut cmd = Command::new(&command[0]);
+            cmd.args(&command[1..]);
+            if let Some(child_stderr) = child_stderr {
+                cmd.stderr(child_stderr);
+            };
+
+            let err = cmd.exec();
             bail!("Failed to exec: {err}");
         }
     }
